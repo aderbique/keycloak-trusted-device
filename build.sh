@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/env bash
 set -euo pipefail
 
 # Where am I?
@@ -11,6 +11,7 @@ cd "${SCRIPT_DIR}"
 KEYCLOAK_VERSION="${KEYCLOAK_VERSION:-26.3}"
 IMAGE_REPO="${IMAGE_REPO:-austinderbique/keycloak-trusted-device}"
 IMAGE_NAME="${IMAGE_NAME:-${IMAGE_REPO}:${KEYCLOAK_VERSION}}"
+LATEST_TAG="${LATEST_TAG:-false}" # Passed from workflow
 
 REPO_URL="${REPO_URL:-https://github.com/wouterh-dev/keycloak-spi-trusted-device.git}"
 REPO_DIR="${REPO_DIR:-${SCRIPT_DIR}/keycloak-spi-trusted-device}"
@@ -42,12 +43,13 @@ Options (env vars also supported):
   -P, --platforms LIST      Buildx platforms (default: ${PLATFORMS})
       --push                Push image after build (default: ${PUSH})
       --no-cache            Build with no cache (default: ${NO_CACHE})
+      --latest              Also tag as latest (default: ${LATEST_TAG})
 
   -h, --help                Show this help
 
 Examples:
-  ./build.sh -v 26.3 --push
-  PLATFORMS=linux/amd64,linux/arm64 KEYCLOAK_VERSION=26.1 PUSH=true ./build.sh
+  ./build.sh -v 26.3 --push --latest
+  PLATFORMS=linux/amd64,linux/arm64 KEYCLOAK_VERSION=26.1 PUSH=true LATEST_TAG=true ./build.sh
 EOF
 }
 
@@ -63,6 +65,7 @@ while [[ $# -gt 0 ]]; do
     -P|--platforms) PLATFORMS="$2"; shift 2 ;;
     --push) PUSH="true"; shift ;;
     --no-cache) NO_CACHE="true"; shift ;;
+    --latest) LATEST_TAG="true"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
   esac
@@ -108,10 +111,16 @@ BUILD_ARGS=(
 )
 [[ "${NO_CACHE}" == "true" ]] && BUILD_ARGS+=(--no-cache)
 
+# Tags
+TAGS=(-t "${IMAGE_REPO}:${KEYCLOAK_VERSION}")
+if [[ "${LATEST_TAG}" == "true" ]]; then
+  TAGS+=(-t "${IMAGE_REPO}:latest")
+fi
+
 # Build command (context = this dir)
 CMD=(docker buildx build
   --platform "${PLATFORMS}"
-  -t "${IMAGE_NAME}"
+  "${TAGS[@]}"
   "${BUILD_ARGS[@]}"
   -f "${DOCKERFILE}"
   "${BUILD_CONTEXT}"
@@ -132,7 +141,8 @@ fi
 echo
 echo "Building image:"
 echo "  Keycloak version : ${KEYCLOAK_VERSION}"
-echo "  Image            : ${IMAGE_NAME}"
+echo "  Image repo       : ${IMAGE_REPO}"
+echo "  Tags             : ${TAGS[*]}"
 echo "  Dockerfile       : ${DOCKERFILE}"
 echo "  Context          : ${BUILD_CONTEXT}"
 echo "  Platforms        : ${PLATFORMS}"
@@ -144,10 +154,12 @@ echo
 "${CMD[@]}"
 
 echo
-echo "✅ Build complete: ${IMAGE_NAME}"
+echo "✅ Build complete: ${IMAGE_REPO}:${KEYCLOAK_VERSION}"
+[[ "${LATEST_TAG}" == "true" ]] && echo "Also tagged as :latest"
 [[ "${PUSH}" != "true" ]] && echo "Tip: set --push (or PUSH=true) to publish the image."
 
 # Optional cleanup:
 # rm -f "${PROVIDER_JAR_PATH}"
 
 exit 0
+
