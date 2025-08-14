@@ -4,7 +4,7 @@ This repository builds and publishes a custom [Keycloak](https://github.com/keyc
 It adds a configurable authentication flow that allows Keycloak to **remember trusted devices** and selectively skip MFA challenges when logging in from recognized devices.
 
 The image is automatically published to Docker Hub:  
-➡ **[Docker Hub Repository](https://hub.docker.com/repository/docker/austinderbique/keycloak-trusted-device/general)**
+➡ **[Docker Hub Repository](https://hub.docker.com/repository/docker/austinderbique/keycloak-trusted-device)**
 
 ---
 
@@ -106,7 +106,7 @@ The Docker image is **automatically built and published** using GitHub Actions u
 ## 📦 Availability
 
 Images are pushed to Docker Hub at:  
-**[austinderbique/keycloak-trusted-device](https://hub.docker.com/repository/docker/austinderbique/keycloak-trusted-device/general)**  
+**[austinderbique/keycloak-trusted-device](https://hub.docker.com/repository/docker/austinderbique/keycloak-trusted-device)**  
 
 Tags follow the pattern:
 
