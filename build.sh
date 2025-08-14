@@ -150,3 +150,4 @@ echo "✅ Build complete: ${IMAGE_NAME}"
 # Optional cleanup:
 # rm -f "${PROVIDER_JAR_PATH}"
 
+exit 0
