@@ -1,0 +1,78 @@
+# .github/workflows/build-push.yml
+name: build-push
+
+on:
+  push:
+    tags: ['v*']   # v26.3 -> KEYCLOAK_VERSION=26.3
+  workflow_dispatch:
+    inputs:
+      keycloak_version:
+        description: 'Keycloak version (e.g., 26.3)'
+        required: false
+        default: '26.3'
+      platforms:
+        description: 'Platforms (comma-separated)'
+        required: false
+        default: 'linux/amd64,linux/arm64'
+      push:
+        description: 'Push image to Docker Hub?'
+        required: false
+        default: 'true'
+
+env:
+  IMAGE_REPO: austinderbique/keycloak-trusted-device
+  KEYCLOAK_VERSION: 26.3
+  PLATFORMS: linux/amd64,linux/arm64
+  PUSH: "true"
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Derive KEYCLOAK_VERSION and options
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" =~ ^v[0-9] ]]; then
+            echo "KEYCLOAK_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            echo "KEYCLOAK_VERSION=${{ inputs.keycloak_version }}" >> "$GITHUB_ENV"
+          fi
+          [[ -n "${{ inputs.platforms }}" ]] && echo "PLATFORMS=${{ inputs.platforms }}" >> "$GITHUB_ENV"
+          [[ -n "${{ inputs.push }}" ]] && echo "PUSH=${{ inputs.push }}" >> "$GITHUB_ENV"
+
+      - name: Set up Temurin JDK 17 (no Maven cache)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: 'none'
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        if: env.PUSH == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Make build.sh executable
+        run: chmod +x ./build.sh
+
+      - name: Build (and optionally push) via build.sh
+        env:
+          KEYCLOAK_VERSION: ${{ env.KEYCLOAK_VERSION }}
+          IMAGE_REPO: ${{ env.IMAGE_REPO }}
+          PLATFORMS: ${{ env.PLATFORMS }}
+          PUSH: ${{ env.PUSH }}
+        run: ./build.sh
+
+      - name: Show result
+        run: echo "Built image: ${IMAGE_REPO}:${KEYCLOAK_VERSION}"
