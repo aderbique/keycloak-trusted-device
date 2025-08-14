@@ -1,5 +1,5 @@
 # .github/workflows/build-keycloak-trusted-device.yml
-name: Build & Push Keycloak Trusted Device
+name: build-push
 
 on:
   push:
