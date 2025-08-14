@@ -1,9 +1,9 @@
+# .github/workflows/build-keycloak-trusted-device.yml
 name: Build & Push Keycloak Trusted Device
 
 on:
   push:
-    tags:
-      - 'v*'            # e.g., v26.3 -> KEYCLOAK_VERSION=26.3
+    tags: ['v*']   # v26.3 -> KEYCLOAK_VERSION=26.3
   workflow_dispatch:
     inputs:
       keycloak_version:
@@ -11,7 +11,7 @@ on:
         required: false
         default: '26.3'
       platforms:
-        description: 'Target platforms (comma-separated)'
+        description: 'Platforms (comma-separated)'
         required: false
         default: 'linux/amd64,linux/arm64'
       push:
@@ -19,13 +19,8 @@ on:
         required: false
         default: 'true'
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 env:
   IMAGE_REPO: austinderbique/keycloak-trusted-device
-  # Default fallbacks; overridden below per event
   KEYCLOAK_VERSION: 26.3
   PLATFORMS: linux/amd64,linux/arm64
   PUSH: "true"
@@ -33,42 +28,29 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Derive KEYCLOAK_VERSION and options
-        id: vars
         shell: bash
         run: |
-          # If triggered by tag like v26.3, extract 26.3
           if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" =~ ^v[0-9] ]]; then
             echo "KEYCLOAK_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
           else
             echo "KEYCLOAK_VERSION=${{ inputs.keycloak_version }}" >> "$GITHUB_ENV"
           fi
+          [[ -n "${{ inputs.platforms }}" ]] && echo "PLATFORMS=${{ inputs.platforms }}" >> "$GITHUB_ENV"
+          [[ -n "${{ inputs.push }}" ]] && echo "PUSH=${{ inputs.push }}" >> "$GITHUB_ENV"
 
-          # Platforms & push flag (from inputs on workflow_dispatch)
-          if [[ -n "${{ inputs.platforms }}" ]]; then
-            echo "PLATFORMS=${{ inputs.platforms }}" >> "$GITHUB_ENV"
-          fi
-          if [[ -n "${{ inputs.push }}" ]]; then
-            echo "PUSH=${{ inputs.push }}" >> "$GITHUB_ENV"
-          fi
-
-          echo "Using KEYCLOAK_VERSION=$KEYCLOAK_VERSION"
-          echo "PLATFORMS=$PLATFORMS"
-          echo "PUSH=$PUSH"
-
-      - name: Set up Temurin JDK 17 (for Maven build)
+      - name: Set up Temurin JDK 17 (no Maven cache)
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
-          cache: 'maven'
+          cache: 'none'
 
-      - name: Set up QEMU (multi-arch emulation)
+      - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
@@ -81,31 +63,17 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Optional: cache Buildx layers for speed (safe to remove if you prefer)
-      - name: Configure Buildx cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ env.KEYCLOAK_VERSION }}-${{ hashFiles('**/Dockerfile', 'build.sh') }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
-
       - name: Make build.sh executable
         run: chmod +x ./build.sh
 
-      - name: Build (and optionally push) image via build.sh
+      - name: Build (and optionally push) via build.sh
         env:
-          # Passed into your script
           KEYCLOAK_VERSION: ${{ env.KEYCLOAK_VERSION }}
           IMAGE_REPO: ${{ env.IMAGE_REPO }}
           PLATFORMS: ${{ env.PLATFORMS }}
           PUSH: ${{ env.PUSH }}
-          # Optional: disable Docker cache if you want
-          # NO_CACHE: "true"
-        run: |
-          ./build.sh
+        run: ./build.sh
 
       - name: Show result
-        run: |
-          echo "Built image: ${IMAGE_REPO}:${KEYCLOAK_VERSION}"
+        run: echo "Built image: ${IMAGE_REPO}:${KEYCLOAK_VERSION}"
+
