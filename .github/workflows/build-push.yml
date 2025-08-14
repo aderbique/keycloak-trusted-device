@@ -1,15 +1,20 @@
 name: build-push
 
 on:
+  # Weekly auto-check (Monday 09:00 America/Phoenix = 16:00 UTC)
+  schedule:
+    - cron: '0 16 * * 1'
+  # Allow forcing a specific version by pushing a tag like v26.3
   push:
     tags:
-      - 'v*'            # e.g., v26.3 -> KEYCLOAK_VERSION=26.3
+      - 'v*'
+  # Manual run; leave version blank to build latest
   workflow_dispatch:
     inputs:
       keycloak_version:
-        description: 'Keycloak version (e.g., 26.3)'
+        description: 'Keycloak version (e.g., 26.3) or leave blank to use latest'
         required: false
-        default: '26.3'
+        default: ''
       platforms:
         description: 'Target platforms (comma-separated)'
         required: false
@@ -19,13 +24,16 @@ on:
         required: false
         default: 'true'
 
+permissions:
+  contents: write   # needed to push the built-<version> tag
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   IMAGE_REPO: austinderbique/keycloak-trusted-device
-  # Default fallbacks; overridden below per event
+  # Sensible defaults (used for schedule unless overridden)
   KEYCLOAK_VERSION: 26.3
   PLATFORMS: linux/amd64,linux/arm64
   PUSH: "true"
@@ -37,19 +45,62 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Derive KEYCLOAK_VERSION and options
-        id: vars
+      - name: Determine target Keycloak version
+        id: ver
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          # If triggered by tag like v26.3, extract 26.3
-          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" =~ ^v[0-9] ]]; then
-            echo "KEYCLOAK_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-          else
-            echo "KEYCLOAK_VERSION=${{ inputs.keycloak_version }}" >> "$GITHUB_ENV"
-          fi
+          set -euo pipefail
 
-          # Platforms & push flag (from inputs on workflow_dispatch)
+          resolve_from_tag() {
+            # e.g., refs/tags/v26.3 -> 26.3
+            echo "${GITHUB_REF_NAME#v}"
+          }
+
+          resolve_from_input_or_latest() {
+            if [[ -n "${{ inputs.keycloak_version }}" ]]; then
+              echo "${{ inputs.keycloak_version }}"
+            else
+              # Query upstream latest release (tag may be like "26.3.1" or "26.3"; strip any leading 'v')
+              latest="$(gh api repos/keycloak/keycloak/releases/latest -q .tag_name)"
+              echo "${latest#v}"
+            fi
+          }
+
+          case "${GITHUB_EVENT_NAME}" in
+            push)
+              # When pushing a v* tag, that wins
+              if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" =~ ^v[0-9] ]]; then
+                VER="$(resolve_from_tag)"
+              else
+                VER="$(resolve_from_input_or_latest)"
+              fi
+              ;;
+            workflow_dispatch)
+              VER="$(resolve_from_input_or_latest)"
+              ;;
+            schedule)
+              VER="$(resolve_from_input_or_latest)"
+              ;;
+            *)
+              VER="$(resolve_from_input_or_latest)"
+              ;;
+          esac
+
+          # Expose for later steps
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "TARGET_VERSION=${VER}" >> "$GITHUB_ENV"
+          echo "Target Keycloak version: ${VER}"
+
+      - name: Decide platforms & push flag
+        id: opts
+        shell: bash
+        run: |
+          # Platforms & push flag only come from workflow_dispatch inputs; otherwise keep defaults
           if [[ -n "${{ inputs.platforms }}" ]]; then
             echo "PLATFORMS=${{ inputs.platforms }}" >> "$GITHUB_ENV"
           fi
@@ -57,31 +108,54 @@ jobs:
             echo "PUSH=${{ inputs.push }}" >> "$GITHUB_ENV"
           fi
 
-          echo "Using KEYCLOAK_VERSION=$KEYCLOAK_VERSION"
-          echo "PLATFORMS=$PLATFORMS"
+          echo "Using PLATFORMS=$PLATFORMS"
           echo "PUSH=$PUSH"
 
+      - name: Skip if this version already built
+        id: skip
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --tags --force --prune
+          tag="built-${{ steps.ver.outputs.version }}"
+          if git tag -l | grep -qx "$tag"; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "Found tag $tag; already built. Skipping."
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set KEYCLOAK_VERSION env
+        if: steps.skip.outputs.already == 'false'
+        shell: bash
+        run: |
+          echo "KEYCLOAK_VERSION=${{ steps.ver.outputs.version }}" >> "$GITHUB_ENV"
+          echo "Building Keycloak ${KEYCLOAK_VERSION}"
+
       - name: Set up Temurin JDK 17 (for Maven build)
+        if: steps.skip.outputs.already == 'false'
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
       - name: Set up QEMU (multi-arch emulation)
+        if: steps.skip.outputs.already == 'false'
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
+        if: steps.skip.outputs.already == 'false'
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker Hub
-        if: env.PUSH == 'true'
+        if: env.PUSH == 'true' && steps.skip.outputs.already == 'false'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Optional: cache Buildx layers for speed (safe to remove if you prefer)
       - name: Configure Buildx cache
+        if: steps.skip.outputs.already == 'false'
         uses: actions/cache@v4
         with:
           path: |
@@ -91,20 +165,33 @@ jobs:
             ${{ runner.os }}-buildx-
 
       - name: Make build.sh executable
+        if: steps.skip.outputs.already == 'false'
         run: chmod +x ./build.sh
 
       - name: Build (and optionally push) image via build.sh
+        if: steps.skip.outputs.already == 'false'
         env:
-          # Passed into your script
           KEYCLOAK_VERSION: ${{ env.KEYCLOAK_VERSION }}
           IMAGE_REPO: ${{ env.IMAGE_REPO }}
           PLATFORMS: ${{ env.PLATFORMS }}
           PUSH: ${{ env.PUSH }}
-          # Optional: disable Docker cache if you want
-          # NO_CACHE: "true"
+        run: ./build.sh
+
+      - name: Tag repo with built-<version>
+        if: steps.skip.outputs.already == 'false'
+        shell: bash
         run: |
-          ./build.sh
+          set -euo pipefail
+          tag="built-${{ env.KEYCLOAK_VERSION }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f -a "$tag" -m "Built Keycloak ${{ env.KEYCLOAK_VERSION }}"
+          git push -f origin "$tag"
+          echo "Tagged repository with $tag"
 
       - name: Show result
+        if: steps.skip.outputs.already == 'false'
         run: |
           echo "Built image: ${IMAGE_REPO}:${KEYCLOAK_VERSION}"
+          echo "Platforms: ${PLATFORMS}"
+          echo "Pushed: ${PUSH}"
