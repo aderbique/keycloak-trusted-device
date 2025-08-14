@@ -95,6 +95,18 @@ jobs:
           echo "version=${VER}" >> "$GITHUB_OUTPUT"
           echo "TARGET_VERSION=${VER}" >> "$GITHUB_ENV"
           echo "Target Keycloak version: ${VER}"
+      
+      - name: Determine upstream latest (for latest-tag decision)
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          LATEST="$(gh api repos/keycloak/keycloak/releases/latest -q .tag_name)"
+          LATEST="${LATEST#v}"
+          echo "version=${LATEST}" >> "$GITHUB_OUTPUT"
+          echo "Upstream latest: ${LATEST}"
 
       - name: Decide platforms & push flag
         id: opts
@@ -124,6 +136,20 @@ jobs:
           else
             echo "already=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Decide latest tag
+        if: steps.skip.outputs.already == 'false'
+        id: latest
+        shell: bash
+        run: |
+          TARGET="${{ steps.ver.outputs.version }}"
+          UPSTREAM="${{ steps.upstream.outputs.version }}"
+          if [[ "$TARGET" == "$UPSTREAM" ]]; then
+            echo "LATEST_TAG=true"  >> "$GITHUB_ENV"
+          else
+            echo "LATEST_TAG=false" >> "$GITHUB_ENV"
+          fi
+          echo "Target=$TARGET UpstreamLatest=$UPSTREAM -> LATEST_TAG=$LATEST_TAG"
 
       - name: Set KEYCLOAK_VERSION env
         if: steps.skip.outputs.already == 'false'
@@ -175,6 +201,7 @@ jobs:
           IMAGE_REPO: ${{ env.IMAGE_REPO }}
           PLATFORMS: ${{ env.PLATFORMS }}
           PUSH: ${{ env.PUSH }}
+          LATEST_TAG: ${{ env.LATEST_TAG }}
         run: ./build.sh
 
       - name: Tag repo with built-<version>
