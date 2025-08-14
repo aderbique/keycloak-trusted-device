@@ -48,7 +48,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: 'none'
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
