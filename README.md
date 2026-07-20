@@ -214,6 +214,10 @@ services:
 
 > **Swarm note:** if you deploy this through Portainer or `docker stack deploy`, make sure `KC_DB_URL` points at the actual swarm service name, such as `keycloak_postgres`, not a bare `postgres` hostname.
 
+## Troubleshooting
+
+- If an LDAP-backed user can log into Synology but Keycloak says `invalid_user_credentials`, check for a stale local Keycloak `password` credential on that user and make sure the LDAP connection timeout is not absurdly low. In one real deployment, clearing the local password credential and increasing the LDAP timeout fixed the mismatch immediately.
+
 ## 📚 References
 
 - **Keycloak** – [https://github.com/keycloak/keycloak](https://github.com/keycloak/keycloak)  
