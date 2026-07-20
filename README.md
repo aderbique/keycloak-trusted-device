@@ -212,6 +212,8 @@ services:
         max_attempts: 5
 ```
 
+> **Swarm note:** if you deploy this through Portainer or `docker stack deploy`, make sure `KC_DB_URL` points at the actual swarm service name, such as `keycloak_postgres`, not a bare `postgres` hostname.
+
 ## 📚 References
 
 - **Keycloak** – [https://github.com/keycloak/keycloak](https://github.com/keycloak/keycloak)  
